@@ -7,6 +7,8 @@ const crypto = require("crypto");
 const app = express();
 const PORT = process.env.PORT || 7000;
 
+app.set('trust proxy', true);
+
 app.use((req, res, next) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type, Accept");
@@ -531,12 +533,18 @@ async function getChannelsFromCache(configKey, config) {
     return cachedData;
 }
 
+function getPublicHost(req) {
+    const forwardedProto = req.get('x-forwarded-proto') || req.protocol;
+    const forwardedHost = req.get('x-forwarded-host') || req.get('host');
+    return `${forwardedProto}://${forwardedHost}`;
+}
+
 app.get("/:base64Config/manifest.json", async (req, res) => {
     try {
         const configKey = req.params.base64Config;
         const config = decodeConfig(configKey);
         const channels = await getChannelsFromCache(configKey, config);
-        const host = `${req.protocol}://${req.get("host")}`;
+        const host = getPublicHost(req);
 
         res.json({
             id: "org.stremio.kronos.channel",
@@ -640,7 +648,7 @@ async function catalogResponse(req, res) {
     const extraParams = getExtraParams(req.params.extra);
     const targetGroup = extraParams.genre || null;
     const targetSource = getCatalogSourceName(req.params.id);
-    const host = `${req.protocol}://${req.get("host")}`;
+    const host = getPublicHost(req);
     const filteredChannels = sortChannelsByName(channels.filter(channel => {
         const matchesSource = targetSource ? channel.sourceName === targetSource : true;
         const matchesGroup = targetGroup ? normalizeGroupName(channel.group) === normalizeGroupName(targetGroup) : true;
@@ -658,7 +666,7 @@ app.get("/:base64Config/meta/:type/:id.json", async (req, res) => {
     const configKey = req.params.base64Config;
     const config = decodeConfig(configKey);
     const c = await getChannelById(configKey, config, req.params.id);
-    const host = `${req.protocol}://${req.get("host")}`;
+    const host = getPublicHost(req);
     if (!c) return res.status(404).json({ meta: null });
     res.json({ meta: toMeta(c, host, configKey, config) });
 });
@@ -668,7 +676,7 @@ app.get("/:base64Config/poster/:id.svg", async (req, res) => {
         const configKey = req.params.base64Config;
         const config = decodeConfig(configKey);
         const c = await getChannelById(configKey, config, req.params.id);
-        const host = `${req.protocol}://${req.get("host")}`;
+        const host = getPublicHost(req);
         const logoUrl = c?.logo || `${host}/logo.svg`;
         const logoDataUri = await getLogoDataUri(logoUrl);
         const name = c?.name || "Kronos";
@@ -731,7 +739,7 @@ app.get("/:base64Config/stream/:type/:id.json", async (req, res) => {
     const c = await getChannelById(configKey, config, req.params.id);
     if (!c) return res.json({ streams: [] });
 
-    const host = `${req.protocol}://${req.get("host")}`;
+    const host = getPublicHost(req);
     const stream = buildStream(c, host, configKey, config);
 
     res.json({ streams: [stream] });

@@ -8,14 +8,30 @@ pinned: false
 app_port: 7860
 ---
 
-# K.R.O.N.O.S. - Kanal Routing Optimized Network On Stremio
+<div align="center">
 
-Addon configuratore di canali TV per Stremio che supporta:
+```
+        ◯ ─────────────────────── ◯
+      ╱                             ╲
+    ╱         ◯ ─────────── ◯         ╲
+   │         ╱               ╲         │
+   │        │                 │        │
+   │        │       TV        │        │
+   │        │                 │        │
+   │         ╲               ╱         │
+    ╲         ◯ ─────────── ◯         ╱
+      ╲                             ╱
+        ◯ ─────────────────────── ◯
+```
 
-- 📺 Liste M3U multiple
-- 📋 Guida EPG (Electronic Program Guide)
-- 🔄 Proxy resolver per stream
-- 🎯 Filtri per gruppi di canali
+# K.R.O.N.O.S.
+**Kanal Routing Optimized Network On Stremio**
+
+Addon configuratore di canali TV per Stremio
+
+📺 Liste M3U multiple • 📋 Guida EPG • 🔄 Proxy resolver • 🎯 Filtri gruppi
+
+</div>
 
 ## 🚀 Deploy su Hugging Face Spaces
 

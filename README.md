@@ -44,29 +44,63 @@ Addon configuratore di canali TV per Stremio
    - **Space hardware**: Lascia **CPU basic - Free** (sufficiente per questo addon)
 4. Clicca su **Create Space**
 
-### Passo 3: Collegare GitHub a Hugging Face
+### Passo 3: Configurare il Dockerfile
 
-1. Una volta creato lo Space, vai nella tab **Settings** (in alto)
-2. Scorri fino alla sezione **Repository**
-3. Clicca su **Link to GitHub**
-4. Autorizza Hugging Face ad accedere al tuo account GitHub
-5. Seleziona il repository **Kronos** che hai forkato
-6. Clicca su **Link repository**
+1. Una volta creato lo Space, clicca su **Files** in alto
+2. Clicca su **Add file** → **Create a new file**
+3. Nomina il file: `Dockerfile` (senza estensione)
+4. Copia e incolla questo contenuto:
+
+```dockerfile
+# Usa l'immagine ufficiale Node.js 18 basata su Alpine Linux
+FROM node:18-alpine
+
+# Installa git per clonare il repository
+RUN apk add --no-cache git
+
+# Imposta la directory di lavoro
+WORKDIR /app
+
+# Clona il repository GitHub (SOSTITUISCI TUO_USERNAME con il tuo username GitHub)
+RUN git clone https://github.com/TUO_USERNAME/Kronos.git . && \
+    rm -rf .git
+
+# Installa solo le dipendenze di produzione
+RUN npm ci --only=production && \
+    npm cache clean --force
+
+# Espone la porta 7860 richiesta da Hugging Face Spaces
+EXPOSE 7860
+
+# Imposta le variabili d'ambiente
+ENV PORT=7860 \
+    NODE_ENV=production
+
+# Comando di avvio del server
+CMD ["node", "server.js"]
+```
+
+5. **IMPORTANTE**: Sostituisci `TUO_USERNAME` alla riga 11 con il tuo username GitHub
+   - Esempio: se il tuo username è `mario-rossi`, la riga diventa:
+   - `RUN git clone https://github.com/mario-rossi/Kronos.git . && \`
+6. Clicca su **Commit new file to main**
 
 ### Passo 4: Deploy automatico
 
-1. Hugging Face rileverà automaticamente il `Dockerfile` nel repository
+1. Hugging Face rileverà automaticamente il `Dockerfile`
 2. Inizierà il build dell'immagine Docker (può richiedere 3-5 minuti)
-3. Puoi seguire i log del build nella tab **Logs**
-4. Quando il build è completato, lo Space sarà automaticamente online
-5. L'addon sarà accessibile all'URL: `https://huggingface.co/spaces/TUO_USERNAME/kronos-stremio`
+3. Il build clonerà automaticamente il progetto dal tuo repository GitHub
+4. Puoi seguire i log del build nella tab **Logs**
+5. Quando il build è completato, lo Space sarà automaticamente online
+6. L'addon sarà accessibile all'URL: `https://huggingface.co/spaces/TUO_USERNAME/kronos-stremio`
 
 ### Passo 5: Aggiornamenti automatici
 
-Ogni volta che fai un commit sul tuo repository GitHub:
-1. Hugging Face rileverà automaticamente le modifiche
-2. Farà un nuovo build dell'immagine Docker
-3. Aggiornerà lo Space con la nuova versione
+Per aggiornare l'addon:
+1. Fai le modifiche nel tuo repository GitHub
+2. Vai sul tuo Space Hugging Face
+3. Clicca su **Settings** → **Factory reboot**
+4. Il build ripartirà e scaricherà l'ultima versione da GitHub
 
 ## 📖 Utilizzo dell'Addon
 

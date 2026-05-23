@@ -49,37 +49,7 @@ Addon configuratore di canali TV per Stremio
 1. Una volta creato lo Space, clicca su **Files** in alto
 2. Clicca su **Add file** → **Create a new file**
 3. Nomina il file: `Dockerfile` (senza estensione)
-4. Copia e incolla questo contenuto:
-
-```dockerfile
-# Usa l'immagine ufficiale Node.js 18 basata su Alpine Linux
-FROM node:18-alpine
-
-# Installa git per clonare il repository
-RUN apk add --no-cache git
-
-# Imposta la directory di lavoro
-WORKDIR /app
-
-# Clona il repository GitHub (SOSTITUISCI TUO_USERNAME con il tuo username GitHub)
-RUN git clone https://github.com/TUO_USERNAME/Kronos.git . && \
-    rm -rf .git
-
-# Installa solo le dipendenze di produzione
-RUN npm ci --only=production && \
-    npm cache clean --force
-
-# Espone la porta 7860 richiesta da Hugging Face Spaces
-EXPOSE 7860
-
-# Imposta le variabili d'ambiente
-ENV PORT=7860 \
-    NODE_ENV=production
-
-# Comando di avvio del server
-CMD ["node", "server.js"]
-```
-
+4. Copia e incolla il contenuto del file Dockerfile.hf che trovi nel github
 5. **IMPORTANTE**: Sostituisci `TUO_USERNAME` alla riga 11 con il tuo username GitHub
    - Esempio: se il tuo username è `mario-rossi`, la riga diventa:
    - `RUN git clone https://github.com/mario-rossi/Kronos.git . && \`

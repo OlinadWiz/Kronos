@@ -35,11 +35,18 @@ const ADDON_TYPE = "kronos";
 const RELEASE_VERSION = "1.5.7";
 
 function decodeConfig(configKey) {
-    const normalized = String(configKey || "")
-        .replace(/-/g, "+")
-        .replace(/_/g, "/");
-    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
-    return JSON.parse(Buffer.from(padded, "base64").toString("utf8"));
+    try {
+        const normalized = String(configKey || "")
+            .replace(/-/g, "+")
+            .replace(/_/g, "/");
+        const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+        const decoded = JSON.parse(Buffer.from(padded, "base64").toString("utf8"));
+        console.log('[DECODE CONFIG] Successfully decoded config');
+        return decoded;
+    } catch (err) {
+        console.error('[DECODE CONFIG ERROR]', err.message);
+        throw new Error('Invalid configuration token');
+    }
 }
 
 app.get("/logo.svg", (req, res) => {
@@ -59,6 +66,16 @@ app.get("/logo.svg", (req, res) => {
             </defs>
         </svg>
     `);
+});
+
+app.get("/health", (req, res) => {
+    res.json({
+        status: "ok",
+        version: RELEASE_VERSION,
+        uptime: process.uptime(),
+        memory: process.memoryUsage(),
+        timestamp: new Date().toISOString()
+    });
 });
 
 async function updateEPGCache(epgUrl) {
@@ -215,15 +232,33 @@ function getConfiguredLists(config) {
 
 async function fetchPlaylist(config, sourceUrl) {
     const playlistUrl = getResolverPlaylistUrl(config, sourceUrl);
-    const response = await axios.get(playlistUrl, {
-        timeout: 30000,
-        headers: {
-            "User-Agent": "Kronos/1.5.7",
-            "Accept": "application/x-mpegURL, audio/mpegurl, text/plain, */*"
+    console.log('[FETCH PLAYLIST] Attempting to fetch:', playlistUrl);
+    
+    try {
+        const response = await axios.get(playlistUrl, {
+            timeout: 60000,
+            maxRedirects: 5,
+            headers: {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "*/*",
+                "Accept-Encoding": "gzip, deflate",
+                "Connection": "keep-alive"
+            },
+            validateStatus: function (status) {
+                return status >= 200 && status < 300;
+            }
+        });
+        
+        console.log('[FETCH PLAYLIST] Success:', playlistUrl, 'Size:', response.data.length);
+        return response.data;
+    } catch (err) {
+        console.error('[FETCH PLAYLIST ERROR]', playlistUrl, err.message);
+        if (err.response) {
+            console.error('[FETCH PLAYLIST ERROR] Status:', err.response.status);
+            console.error('[FETCH PLAYLIST ERROR] Headers:', err.response.headers);
         }
-    });
-
-    return response.data;
+        throw err;
+    }
 }
 
 function toAbsoluteUrl(value, baseUrl) {
@@ -313,6 +348,8 @@ function parseM3UChannels(data, source = {}) {
     const channels = [];
     let currentChannel = null;
 
+    console.log(`[PARSE M3U] Parsing playlist from ${source.name}, total lines: ${lines.length}`);
+
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i].trim();
         if (line.startsWith("#EXTINF:")) {
@@ -336,6 +373,12 @@ function parseM3UChannels(data, source = {}) {
             channels.push(currentChannel);
             currentChannel = null;
         }
+    }
+
+    console.log(`[PARSE M3U] Parsed ${channels.length} channels from ${source.name}`);
+    if (channels.length > 0) {
+        const groups = [...new Set(channels.map(c => c.group))];
+        console.log(`[PARSE M3U] Groups found in ${source.name}:`, groups);
     }
 
     return channels;
@@ -478,14 +521,29 @@ async function fetchAndProcessChannels(configKey, config, options = {}) {
     memoryCache.isUpdating[configKey] = true;
 
     try {
+        console.log('[DEBUG FETCH] Starting channel fetch for config:', configKey.substring(0, 20) + '...');
+        console.log('[DEBUG FETCH] Config mode:', config.gm);
+        console.log('[DEBUG FETCH] Config has proxy:', !!config.p);
+        
         const epgMap = config.e ? await updateEPGCache(config.e) : {};
         const configuredLists = getConfiguredLists(config);
+        console.log('[DEBUG FETCH] Configured lists:', configuredLists.length);
+        
         const selectedGroups = Array.isArray(config.g) ? config.g : [];
+        console.log('[DEBUG FETCH] Selected groups:', selectedGroups);
+        
         const selectedGroupSet = new Set(selectedGroups.map(normalizeGroupName));
         const bucketGroup = selectedGroups[0] || "Kronos";
+        
         const parsedChannelGroups = await Promise.all(configuredLists.map(async list => {
+            console.log('[DEBUG FETCH] Fetching playlist:', list.url);
             const playlistData = await fetchPlaylist(config, list.url);
-            return parseM3UChannels(playlistData, list);
+            const parsed = parseM3UChannels(playlistData, list);
+            console.log(`[DEBUG FETCH] Parsed ${parsed.length} channels from ${list.name}`);
+            if (parsed.length > 0) {
+                console.log('[DEBUG FETCH] Sample parsed channel:', JSON.stringify(parsed[0], null, 2));
+            }
+            return parsed;
         }));
 
         const channels = parsedChannelGroups.flat()
@@ -493,7 +551,11 @@ async function fetchAndProcessChannels(configKey, config, options = {}) {
                 if (config.gm === "list") return true;
                 if (config.gm === "bucket") return true;
                 if (selectedGroupSet.size === 0) return true;
-                return selectedGroupSet.has(normalizeGroupName(channel.group));
+                const matches = selectedGroupSet.has(normalizeGroupName(channel.group));
+                if (!matches) {
+                    console.log(`[DEBUG FETCH] Filtering out channel "${channel.name}" with group "${channel.group}"`);
+                }
+                return matches;
             })
             .map(channel => ({
                 ...channel,
@@ -504,11 +566,18 @@ async function fetchAndProcessChannels(configKey, config, options = {}) {
                     : "K.R.O.N.O.S. - Nessun dato guida oraria"
             }));
 
+        console.log('[DEBUG FETCH] Final channel count:', channels.length);
+        if (channels.length > 0) {
+            const uniqueGroups = [...new Set(channels.map(c => c.group))];
+            console.log('[DEBUG FETCH] Unique groups in final channels:', uniqueGroups);
+        }
+
         memoryCache.channelItems[configKey] = channels;
         memoryCache.channelIndex[configKey] = buildChannelIndex(channels);
         memoryCache.lastUpdate[configKey] = Date.now();
     } catch (err) {
         console.error("[KRONOS ERROR]", err.message);
+        console.error("[KRONOS ERROR STACK]", err.stack);
     } finally {
         memoryCache.isUpdating[configKey] = false;
     }
@@ -517,13 +586,18 @@ async function fetchAndProcessChannels(configKey, config, options = {}) {
 async function getChannelsFromCache(configKey, config) {
     const cachedData = memoryCache.channelItems[configKey];
     if (!cachedData) {
+        console.log('[CACHE] No cached data found, fetching channels...');
         await fetchAndProcessChannels(configKey, config);
-        return memoryCache.channelItems[configKey] || [];
+        const result = memoryCache.channelItems[configKey] || [];
+        console.log('[CACHE] After fetch, channels count:', result.length);
+        return result;
     }
     if (!memoryCache.channelIndex[configKey]) {
+        console.log('[CACHE] Rebuilding channel index...');
         memoryCache.channelIndex[configKey] = buildChannelIndex(cachedData);
     }
     if (Date.now() - (memoryCache.lastUpdate[configKey] || 0) > CACHE_TTL) {
+        console.log('[CACHE] Cache expired, refreshing in background...');
         fetchAndProcessChannels(configKey, config);
     }
     return cachedData;
@@ -539,10 +613,46 @@ app.get("/:base64Config/manifest.json", async (req, res) => {
     try {
         const configKey = req.params.base64Config;
         const config = decodeConfig(configKey);
+        console.log('[DEBUG] Config decoded:', JSON.stringify(config, null, 2));
+        
         const channels = await getChannelsFromCache(configKey, config);
+        console.log('[DEBUG] Total channels loaded:', channels.length);
+        
+        if (channels.length > 0) {
+            console.log('[DEBUG] Sample channel:', JSON.stringify(channels[0], null, 2));
+            const uniqueGroups = [...new Set(channels.map(c => c.group))];
+            console.log('[DEBUG] Unique groups found:', uniqueGroups);
+        }
+        
         const host = getPublicHost(req);
+        console.log('[DEBUG] Public host:', host);
 
-        res.json({
+        const catalogs = ["TUTTI", ...getConfiguredLists(config).map(list => list.name)].map(listName => {
+            const catalogChannels = listName === "TUTTI"
+                ? channels
+                : channels.filter(channel => channel.sourceName === listName);
+            
+            console.log(`[DEBUG] Catalog "${listName}" has ${catalogChannels.length} channels`);
+            
+            const catalogGroups = [...new Set(catalogChannels.map(c => c.group))]
+                .filter(g => g && g.trim())
+                .sort((a, b) => a.localeCompare(b, "it", { sensitivity: "base" }));
+            
+            console.log(`[DEBUG] Catalog "${listName}" groups:`, catalogGroups);
+
+            return {
+                id: toCatalogId(listName),
+                type: ADDON_TYPE,
+                name: listName,
+                extra: catalogGroups.length > 0 ? [{
+                    name: "genre",
+                    options: catalogGroups,
+                    isRequired: false
+                }] : []
+            };
+        });
+
+        const manifest = {
             id: "org.stremio.kronos.channel",
             version: RELEASE_VERSION,
             name: "Kronos",
@@ -555,26 +665,13 @@ app.get("/:base64Config/manifest.json", async (req, res) => {
                 configurable: true,
                 configurationRequired: false
             },
-            catalogs: ["TUTTI", ...getConfiguredLists(config).map(list => list.name)].map(listName => {
-                const catalogChannels = listName === "TUTTI"
-                    ? channels
-                    : channels.filter(channel => channel.sourceName === listName);
-                const catalogGroups = [...new Set(catalogChannels.map(c => c.group))]
-                    .sort((a, b) => a.localeCompare(b, "it", { sensitivity: "base" }));
-
-                return {
-                    id: toCatalogId(listName),
-                    type: ADDON_TYPE,
-                    name: listName,
-                    extra: [{
-                        name: "genre",
-                        options: catalogGroups,
-                        isRequired: false
-                    }]
-                };
-            })
-        });
+            catalogs
+        };
+        
+        console.log('[DEBUG] Manifest catalogs:', JSON.stringify(manifest.catalogs, null, 2));
+        res.json(manifest);
     } catch (err) {
+        console.error('[ERROR] Manifest generation failed:', err);
         res.status(500).json({ error: "Errore Token" });
     }
 });
@@ -638,21 +735,40 @@ app.post("/api/analyze-lists", async (req, res) => {
 });
 
 async function catalogResponse(req, res) {
-    const configKey = req.params.base64Config;
-    const config = decodeConfig(configKey);
-    const channels = await getChannelsFromCache(configKey, config);
-    const extraParams = getExtraParams(req.params.extra);
-    const targetGroup = extraParams.genre || null;
-    const targetSource = getCatalogSourceName(req.params.id);
-    const host = getPublicHost(req);
-    const filteredChannels = sortChannelsByName(channels.filter(channel => {
-        const matchesSource = targetSource ? channel.sourceName === targetSource : true;
-        const matchesGroup = targetGroup ? normalizeGroupName(channel.group) === normalizeGroupName(targetGroup) : true;
-        return matchesSource && matchesGroup;
-    }));
+    try {
+        const configKey = req.params.base64Config;
+        const config = decodeConfig(configKey);
+        const channels = await getChannelsFromCache(configKey, config);
+        const extraParams = getExtraParams(req.params.extra);
+        const targetGroup = extraParams.genre || null;
+        const targetSource = getCatalogSourceName(req.params.id);
+        const host = getPublicHost(req);
+        
+        console.log('[DEBUG CATALOG] Request params:', {
+            catalogId: req.params.id,
+            extra: req.params.extra,
+            targetGroup,
+            targetSource,
+            totalChannels: channels.length
+        });
+        
+        const filteredChannels = sortChannelsByName(channels.filter(channel => {
+            const matchesSource = targetSource ? channel.sourceName === targetSource : true;
+            const matchesGroup = targetGroup ? normalizeGroupName(channel.group) === normalizeGroupName(targetGroup) : true;
+            return matchesSource && matchesGroup;
+        }));
+        
+        console.log('[DEBUG CATALOG] Filtered channels:', filteredChannels.length);
+        if (filteredChannels.length > 0) {
+            console.log('[DEBUG CATALOG] Sample filtered channel:', JSON.stringify(filteredChannels[0], null, 2));
+        }
 
-    const metas = filteredChannels.map(c => toMeta(c, host, configKey, config));
-    res.json({ metas });
+        const metas = filteredChannels.map(c => toMeta(c, host, configKey, config));
+        res.json({ metas });
+    } catch (err) {
+        console.error('[ERROR CATALOG]', err);
+        res.status(500).json({ metas: [] });
+    }
 }
 
 app.get("/:base64Config/catalog/:type/:id.json", catalogResponse);
@@ -749,6 +865,38 @@ app.get("/:base64Config/configure", (req, res) => {
     res.redirect(`/?config=${encodeURIComponent(req.params.base64Config)}`);
 });
 
+app.get("/:base64Config/debug", async (req, res) => {
+    try {
+        const configKey = req.params.base64Config;
+        const config = decodeConfig(configKey);
+        const channels = await getChannelsFromCache(configKey, config);
+        
+        const debugInfo = {
+            config: config,
+            totalChannels: channels.length,
+            sampleChannels: channels.slice(0, 3),
+            uniqueGroups: [...new Set(channels.map(c => c.group))],
+            uniqueSourceNames: [...new Set(channels.map(c => c.sourceName))],
+            configuredLists: getConfiguredLists(config),
+            cacheInfo: {
+                lastUpdate: memoryCache.lastUpdate[configKey],
+                isUpdating: memoryCache.isUpdating[configKey]
+            }
+        };
+        
+        res.json(debugInfo);
+    } catch (err) {
+        res.status(500).json({ error: err.message, stack: err.stack });
+    }
+});
+
 app.listen(PORT, "0.0.0.0", () => {
-    console.log(`K.R.O.N.O.S. pronto su http://0.0.0.0:${PORT}`);
+    console.log(`\n${'='.repeat(60)}`);
+    console.log(`K.R.O.N.O.S. ${RELEASE_VERSION} - Server Started`);
+    console.log(`${'='.repeat(60)}`);
+    console.log(`🌐 Server URL: http://0.0.0.0:${PORT}`);
+    console.log(`📦 Node version: ${process.version}`);
+    console.log(`🔧 Environment: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`💾 Memory: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)}MB`);
+    console.log(`${'='.repeat(60)}\n`);
 });

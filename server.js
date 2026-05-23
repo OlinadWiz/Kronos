@@ -498,11 +498,7 @@ async function fetchAndProcessChannels(configKey, config, options = {}) {
             .map(channel => ({
                 ...channel,
                 name: decorateChannelName(channel, configuredLists.length, config.gm),
-                group: config.gm === "list"
-                    ? channel.sourceName
-                    : config.gm === "bucket"
-                        ? bucketGroup
-                        : channel.group,
+                group: config.gm === "bucket" ? bucketGroup : channel.group,
                 description: channel.tvgId && epgMap[normalizeEpgId(channel.tvgId)]
                     ? epgMap[normalizeEpgId(channel.tvgId)]
                     : "K.R.O.N.O.S. - Nessun dato guida oraria"

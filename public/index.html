@@ -890,6 +890,102 @@
             transform: translate(-50%, 0);
         }
 
+        /* Disclaimer Collapsabile */
+        .disclaimer-collapsible {
+            border: 1px solid rgba(255, 190, 92, 0.25);
+            border-radius: 20px;
+            background: rgba(255, 190, 92, 0.05);
+            overflow: hidden;
+            backdrop-filter: blur(22px);
+            box-shadow: var(--shadow);
+        }
+        
+        .disclaimer-toggle {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px 20px;
+            cursor: pointer;
+            user-select: none;
+            background: rgba(255, 190, 92, 0.08);
+            border-bottom: 1px solid rgba(255, 190, 92, 0.15);
+            transition: background 180ms ease;
+        }
+        
+        .disclaimer-toggle:hover {
+            background: rgba(255, 190, 92, 0.12);
+        }
+        
+        .disclaimer-toggle-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .disclaimer-toggle-icon {
+            font-size: 20px;
+        }
+        
+        .disclaimer-toggle-title {
+            font-weight: 800;
+            font-size: 0.9rem;
+            color: #ffd89b;
+            letter-spacing: 0.03em;
+        }
+        
+        .disclaimer-toggle-arrow {
+            font-size: 18px;
+            color: #ffd89b;
+            transition: transform 280ms ease;
+        }
+        
+        .disclaimer-collapsible.is-open .disclaimer-toggle-arrow {
+            transform: rotate(180deg);
+        }
+        
+        .disclaimer-content {
+            display: grid;
+            grid-template-rows: 0fr;
+            transition: grid-template-rows 280ms ease;
+        }
+        
+        .disclaimer-collapsible.is-open .disclaimer-content {
+            grid-template-rows: 1fr;
+        }
+        
+        .disclaimer-content-inner {
+            overflow: hidden;
+        }
+        
+        .disclaimer-collapsible.is-open .disclaimer-content-inner {
+            padding: 18px 20px 20px;
+        }
+        
+        .disclaimer-content p {
+            margin: 0 0 12px 0;
+            font-size: 0.82rem;
+            line-height: 1.55;
+            color: #e8d4b8;
+        }
+        
+        .disclaimer-content p:last-child {
+            margin-bottom: 0;
+        }
+        
+        .disclaimer-content strong {
+            display: block;
+            color: #ffd89b;
+            font-weight: 800;
+            margin-top: 14px;
+            margin-bottom: 6px;
+            font-size: 0.88rem;
+            letter-spacing: 0.03em;
+        }
+        
+        .disclaimer-content strong:first-child {
+            margin-top: 0;
+        }
+
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
@@ -938,6 +1034,18 @@
             .preview-body,
             .brand-panel {
                 grid-template-columns: 1fr;
+            }
+
+            .disclaimer-toggle {
+                padding: 14px 16px;
+            }
+
+            .disclaimer-toggle-title {
+                font-size: 0.82rem;
+            }
+
+            .disclaimer-content p {
+                font-size: 0.78rem;
             }
 
             .actions,
@@ -1006,6 +1114,33 @@
                 <div class="metric">
                     <strong>Proxy</strong>
                     <span>Resolver usato su liste e stream.</span>
+                </div>
+            </div>
+        </section>
+
+        <section class="disclaimer-collapsible is-open" id="disclaimerPanel" aria-label="Avviso legale">
+            <div class="disclaimer-toggle" role="button" tabindex="0" aria-expanded="true" aria-controls="disclaimerContent">
+                <div class="disclaimer-toggle-left">
+                    <span class="disclaimer-toggle-icon" aria-hidden="true">⚠️</span>
+                    <span class="disclaimer-toggle-title">AVVISO LEGALE E DISCLAIMER</span>
+                </div>
+                <span class="disclaimer-toggle-arrow" aria-hidden="true">▼</span>
+            </div>
+            <div class="disclaimer-content" id="disclaimerContent">
+                <div class="disclaimer-content-inner">
+                    <p>Questo addon è uno strumento di configurazione tecnica che permette di organizzare e visualizzare contenuti da sorgenti esterne fornite dall'utente.</p>
+                    
+                    <strong>IMPORTANTE:</strong>
+                    <p>• Questo software NON fornisce, ospita o distribuisce alcun contenuto multimediale<br>
+                    • Questo software NON include liste M3U, stream o canali preconfigurati<br>
+                    • L'utente è l'unico responsabile delle sorgenti (liste M3U/URL) che sceglie di utilizzare<br>
+                    • L'utente deve assicurarsi di avere i diritti legali per accedere ai contenuti configurati<br>
+                    • L'utilizzo di questo addon per accedere a contenuti protetti da copyright senza autorizzazione è illegale e vietato</p>
+                    
+                    <strong>RESPONSABILITÀ:</strong>
+                    <p>Il creatore e i contributori di questo progetto non sono responsabili dell'uso improprio del software, dei contenuti accessibili tramite liste fornite dall'utente, non forniscono supporto per attività illegali o violazioni del copyright e declinano ogni responsabilità per danni diretti, indiretti o conseguenti.</p>
+                    
+                    <p>Utilizzando questo software, l'utente accetta integralmente questi termini e si assume la piena responsabilità legale del proprio utilizzo.</p>
                 </div>
             </div>
         </section>
@@ -1133,6 +1268,36 @@
     <div id="toast" class="toast" role="status" aria-live="polite">Link copiato negli appunti</div>
 
     <script>
+        // Gestione Disclaimer
+        const disclaimerPanel = document.getElementById('disclaimerPanel');
+        const disclaimerToggle = disclaimerPanel.querySelector('.disclaimer-toggle');
+        
+        // Carica stato disclaimer da localStorage
+        const disclaimerState = localStorage.getItem('kronos_disclaimer_open');
+        if (disclaimerState === 'false') {
+            disclaimerPanel.classList.remove('is-open');
+            disclaimerToggle.setAttribute('aria-expanded', 'false');
+        }
+        
+        // Funzione per toggle del disclaimer
+        function toggleDisclaimer() {
+            const isOpen = disclaimerPanel.classList.toggle('is-open');
+            disclaimerToggle.setAttribute('aria-expanded', isOpen);
+            localStorage.setItem('kronos_disclaimer_open', isOpen);
+        }
+        
+        // Toggle disclaimer con click (su tutto il toggle)
+        disclaimerToggle.addEventListener('click', toggleDisclaimer);
+        
+        // Toggle disclaimer con tastiera (Enter o Space)
+        disclaimerToggle.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                toggleDisclaimer();
+            }
+        });
+        
+        // Form e configurazione
         const form = document.getElementById('configForm');
         const playlistList = document.getElementById('playlistList');
         const addListButton = document.getElementById('addListButton');

@@ -27,7 +27,7 @@ Addon configuratore di canali TV per Stremio
 
 ### Passo 1: Fork del progetto su GitHub
 
-1. Vai al repository originale: `https://github.com/TUO_USERNAME/Kronos`
+1. Vai al repository originale: `https://github.com/OlinadWiz/Kronos`
 2. Clicca sul pulsante **Fork** in alto a destra
 3. Seleziona il tuo account GitHub come destinazione
 4. Attendi che GitHub completi il fork del repository

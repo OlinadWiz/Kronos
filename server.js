@@ -32,7 +32,7 @@ const CACHE_TTL = 30 * 60 * 1000;
 const HLS_REFRESH_TTL = 8 * 1000;
 const HLS_STALE_TTL = 5 * 60 * 1000;
 const ADDON_TYPE = "kronos";
-const RELEASE_VERSION = "1.5.7";
+const RELEASE_VERSION = "1.5.8";
 
 function decodeConfig(configKey) {
     try {
@@ -299,7 +299,7 @@ async function getLogoDataUri(logoUrl) {
             timeout: 10000,
             maxContentLength: 2 * 1024 * 1024,
             headers: {
-                "User-Agent": "Kronos/1.5.7",
+                "User-Agent": "Kronos/1.5.8",
                 "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"
             }
         });
@@ -326,7 +326,7 @@ async function getCachedHLS(cacheKey, sourceUrl, config = {}) {
         const response = await axios.get(fetchUrl, {
             timeout: 15000,
             headers: {
-                "User-Agent": "Kronos/1.5.7",
+                "User-Agent": "Kronos/1.5.8",
                 "Accept": "application/x-mpegURL, audio/mpegurl, text/plain, */*"
             }
         });
@@ -537,13 +537,18 @@ async function fetchAndProcessChannels(configKey, config, options = {}) {
         
         const parsedChannelGroups = await Promise.all(configuredLists.map(async list => {
             console.log('[DEBUG FETCH] Fetching playlist:', list.url);
-            const playlistData = await fetchPlaylist(config, list.url);
-            const parsed = parseM3UChannels(playlistData, list);
-            console.log(`[DEBUG FETCH] Parsed ${parsed.length} channels from ${list.name}`);
-            if (parsed.length > 0) {
-                console.log('[DEBUG FETCH] Sample parsed channel:', JSON.stringify(parsed[0], null, 2));
+            try {
+                const playlistData = await fetchPlaylist(config, list.url);
+                const parsed = parseM3UChannels(playlistData, list);
+                console.log(`[DEBUG FETCH] Parsed ${parsed.length} channels from ${list.name}`);
+                if (parsed.length > 0) {
+                    console.log('[DEBUG FETCH] Sample parsed channel:', JSON.stringify(parsed[0], null, 2));
+                }
+                return parsed;
+            } catch (err) {
+                console.error(`[DEBUG FETCH] Failed to load list "${list.name}" (${list.url}):`, err.message);
+                return [];
             }
-            return parsed;
         }));
 
         const channels = parsedChannelGroups.flat()

@@ -32,7 +32,7 @@ const CACHE_TTL = 30 * 60 * 1000;
 const HLS_REFRESH_TTL = 8 * 1000;
 const HLS_STALE_TTL = 5 * 60 * 1000;
 const ADDON_TYPE = "kronos";
-const RELEASE_VERSION = "1.5.8";
+const RELEASE_VERSION = "1.5.9";
 
 function decodeConfig(configKey) {
     try {
@@ -230,12 +230,11 @@ function getConfiguredLists(config) {
     }].filter(list => list.url);
 }
 
-async function fetchPlaylist(config, sourceUrl) {
-    const playlistUrl = getResolverPlaylistUrl(config, sourceUrl);
-    console.log('[FETCH PLAYLIST] Attempting to fetch:', playlistUrl);
-    
+async function fetchPlaylist(sourceUrl) {
+    console.log('[FETCH PLAYLIST] Attempting to fetch:', sourceUrl);
+
     try {
-        const response = await axios.get(playlistUrl, {
+        const response = await axios.get(sourceUrl, {
             timeout: 60000,
             maxRedirects: 5,
             headers: {
@@ -249,10 +248,10 @@ async function fetchPlaylist(config, sourceUrl) {
             }
         });
         
-        console.log('[FETCH PLAYLIST] Success:', playlistUrl, 'Size:', response.data.length);
+        console.log('[FETCH PLAYLIST] Success:', sourceUrl, 'Size:', response.data.length);
         return response.data;
     } catch (err) {
-        console.error('[FETCH PLAYLIST ERROR]', playlistUrl, err.message);
+        console.error('[FETCH PLAYLIST ERROR]', sourceUrl, err.message);
         if (err.response) {
             console.error('[FETCH PLAYLIST ERROR] Status:', err.response.status);
             console.error('[FETCH PLAYLIST ERROR] Headers:', err.response.headers);
@@ -299,7 +298,7 @@ async function getLogoDataUri(logoUrl) {
             timeout: 10000,
             maxContentLength: 2 * 1024 * 1024,
             headers: {
-                "User-Agent": "Kronos/1.5.8",
+                "User-Agent": "Kronos/1.5.9",
                 "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"
             }
         });
@@ -326,7 +325,7 @@ async function getCachedHLS(cacheKey, sourceUrl, config = {}) {
         const response = await axios.get(fetchUrl, {
             timeout: 15000,
             headers: {
-                "User-Agent": "Kronos/1.5.8",
+                "User-Agent": "Kronos/1.5.9",
                 "Accept": "application/x-mpegURL, audio/mpegurl, text/plain, */*"
             }
         });
@@ -538,7 +537,7 @@ async function fetchAndProcessChannels(configKey, config, options = {}) {
         const parsedChannelGroups = await Promise.all(configuredLists.map(async list => {
             console.log('[DEBUG FETCH] Fetching playlist:', list.url);
             try {
-                const playlistData = await fetchPlaylist(config, list.url);
+                const playlistData = await fetchPlaylist(list.url);
                 const parsed = parseM3UChannels(playlistData, list);
                 console.log(`[DEBUG FETCH] Parsed ${parsed.length} channels from ${list.name}`);
                 if (parsed.length > 0) {
@@ -683,11 +682,7 @@ app.get("/:base64Config/manifest.json", async (req, res) => {
 
 app.post("/api/analyze-link", async (req, res) => {
     try {
-        const config = {
-            p: req.body.proxyUrl || null,
-            pp: req.body.proxyPassword || null
-        };
-        const playlistData = await fetchPlaylist(config, req.body.url);
+        const playlistData = await fetchPlaylist(req.body.url);
         const channels = parseM3UChannels(playlistData, {
             name: req.body.name || "Lista",
             url: req.body.url
@@ -710,13 +705,9 @@ app.post("/api/analyze-link", async (req, res) => {
 
 app.post("/api/analyze-lists", async (req, res) => {
     try {
-        const config = {
-            p: req.body.proxyUrl || null,
-            pp: req.body.proxyPassword || null
-        };
         const lists = getConfiguredLists({ l: req.body.lists || [] });
         const parsedChannelGroups = await Promise.all(lists.map(async list => {
-            const playlistData = await fetchPlaylist(config, list.url);
+            const playlistData = await fetchPlaylist(list.url);
             return parseM3UChannels(playlistData, list);
         }));
         const channels = parsedChannelGroups.flat();

@@ -32,7 +32,8 @@ const CACHE_TTL = 30 * 60 * 1000;
 const HLS_REFRESH_TTL = 8 * 1000;
 const HLS_STALE_TTL = 5 * 60 * 1000;
 const ADDON_TYPE = "kronos";
-const RELEASE_VERSION = "1.5.9";
+const RELEASE_VERSION = "1.5.10";
+const BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
 function decodeConfig(configKey) {
     try {
@@ -167,17 +168,18 @@ function normalizeEpgId(id) {
     return key;
 }
 
-function getResolverPlaylistUrl(config, sourceUrl) {
+function getResolverExtractorUrl(config, sourceUrl) {
     if (!config.p) return sourceUrl;
 
     const proxy = new URL(config.p);
     const cleanPath = proxy.pathname.replace(/\/$/, "");
-    proxy.pathname = `${cleanPath}/playlist`;
+    proxy.pathname = `${cleanPath}/extractor/video.m3u8`;
     proxy.search = "";
-    proxy.searchParams.set("url", sourceUrl);
+    proxy.searchParams.set("d", sourceUrl);
+    proxy.searchParams.set("redirect_stream", "true");
 
-    if (config.pp && proxy.username) {
-        proxy.password = config.pp;
+    if (config.pp) {
+        proxy.searchParams.set("api_password", config.pp);
     }
 
     return proxy.toString();
@@ -196,7 +198,7 @@ function getStreamFetchUrl(config, sourceUrl) {
         return sourceUrl;
     }
 
-    return getResolverPlaylistUrl(config, sourceUrl);
+    return getResolverExtractorUrl(config, sourceUrl);
 }
 
 function getStreamCacheMode(config, sourceUrl) {
@@ -238,7 +240,7 @@ async function fetchPlaylist(sourceUrl) {
             timeout: 60000,
             maxRedirects: 5,
             headers: {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "User-Agent": BROWSER_USER_AGENT,
                 "Accept": "*/*",
                 "Accept-Encoding": "gzip, deflate",
                 "Connection": "keep-alive"
@@ -298,7 +300,7 @@ async function getLogoDataUri(logoUrl) {
             timeout: 10000,
             maxContentLength: 2 * 1024 * 1024,
             headers: {
-                "User-Agent": "Kronos/1.5.9",
+                "User-Agent": "Kronos/1.5.10",
                 "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"
             }
         });
@@ -323,9 +325,9 @@ async function getCachedHLS(cacheKey, sourceUrl, config = {}) {
 
     try {
         const response = await axios.get(fetchUrl, {
-            timeout: 15000,
+            timeout: config.p ? 30000 : 15000,
             headers: {
-                "User-Agent": "Kronos/1.5.9",
+                "User-Agent": BROWSER_USER_AGENT,
                 "Accept": "application/x-mpegURL, audio/mpegurl, text/plain, */*"
             }
         });
@@ -837,6 +839,10 @@ app.get("/:base64Config/hls/:id/index.m3u8", async (req, res) => {
         res.setHeader("Pragma", "no-cache");
         res.send(playlist);
     } catch (err) {
+        console.error('[HLS ERROR]', req.params.id, err.message);
+        if (err.response) {
+            console.error('[HLS ERROR] Status:', err.response.status);
+        }
         res.status(502).send("#EXTM3U\n#EXT-X-ENDLIST\n");
     }
 });

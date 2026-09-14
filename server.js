@@ -32,7 +32,7 @@ const CACHE_TTL = 30 * 60 * 1000;
 const HLS_REFRESH_TTL = 8 * 1000;
 const HLS_STALE_TTL = 5 * 60 * 1000;
 const ADDON_TYPE = "kronos";
-const RELEASE_VERSION = "1.5.10";
+const RELEASE_VERSION = "1.6.0";
 const BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
 function decodeConfig(configKey) {
@@ -300,7 +300,7 @@ async function getLogoDataUri(logoUrl) {
             timeout: 10000,
             maxContentLength: 2 * 1024 * 1024,
             headers: {
-                "User-Agent": "Kronos/1.5.10",
+                "User-Agent": "Kronos/1.6.0",
                 "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"
             }
         });
@@ -355,7 +355,9 @@ function parseM3UChannels(data, source = {}) {
         const line = lines[i].trim();
         if (line.startsWith("#EXTINF:")) {
             const name = (line.match(/,(.+)$/) || [, "Canale Sconosciuto"])[1].trim();
-            const group = (line.match(/group-title="([^"]+)"/) || [, "Altri Canali"])[1].trim();
+            const rawGroup = (line.match(/group-title="([^"]+)"/) || [, "Altri Canali"])[1].trim();
+            const sportTag = (name.match(/^\[([^\]]+)\]/) || [, null])[1];
+            const group = sportTag ? sportTag.trim() : rawGroup;
             const logoMatch = line.match(/tvg-logo="([^"]+)"/);
             const tvgId = (line.match(/tvg-id="([^"]+)"/) || [, null])[1];
             const logo = logoMatch ? logoMatch[1] : `https://placehold.co/512x512/111827/ffffff?text=${encodeURIComponent(name.substring(0, 5))}`;

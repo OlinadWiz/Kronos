@@ -32,8 +32,12 @@ const CACHE_TTL = 30 * 60 * 1000;
 const HLS_REFRESH_TTL = 8 * 1000;
 const HLS_STALE_TTL = 5 * 60 * 1000;
 const ADDON_TYPE = "kronos";
-const RELEASE_VERSION = "1.6.0";
+const RELEASE_VERSION = "1.7.0";
 const BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+const LIVE_NOW_GENRE = "Live NOW";
+const LIVE_NOW_WINDOW_MS = 2 * 60 * 60 * 1000;
+const NEXT_SOON_GENRE = "Next soon";
+const NEXT_SOON_WINDOW_MS = 60 * 60 * 1000;
 
 function decodeConfig(configKey) {
     try {
@@ -300,7 +304,7 @@ async function getLogoDataUri(logoUrl) {
             timeout: 10000,
             maxContentLength: 2 * 1024 * 1024,
             headers: {
-                "User-Agent": "Kronos/1.6.0",
+                "User-Agent": "Kronos/1.7.0",
                 "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"
             }
         });
@@ -344,6 +348,23 @@ async function getCachedHLS(cacheKey, sourceUrl, config = {}) {
     }
 }
 
+function parseEventStartTime(name) {
+    const fullDateMatch = name.match(/(\d{4})-(\d{2})-(\d{2})\s+(\d{1,2}):(\d{2})/);
+    if (fullDateMatch) {
+        const [, year, month, day, hour, minute] = fullDateMatch;
+        return new Date(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute));
+    }
+
+    const timeOnlyMatch = name.match(/\|\s*(\d{1,2}):(\d{2})\s*\(/);
+    if (timeOnlyMatch) {
+        const [, hour, minute] = timeOnlyMatch;
+        const now = new Date();
+        return new Date(now.getFullYear(), now.getMonth(), now.getDate(), Number(hour), Number(minute));
+    }
+
+    return null;
+}
+
 function parseM3UChannels(data, source = {}) {
     const lines = String(data || "").split("\n");
     const channels = [];
@@ -357,7 +378,9 @@ function parseM3UChannels(data, source = {}) {
             const name = (line.match(/,(.+)$/) || [, "Canale Sconosciuto"])[1].trim();
             const rawGroup = (line.match(/group-title="([^"]+)"/) || [, "Altri Canali"])[1].trim();
             const sportTag = (name.match(/^\[([^\]]+)\]/) || [, null])[1];
-            const group = sportTag ? sportTag.trim() : rawGroup;
+            const pipeCategoryMatch = name.match(/^([^|]+)\|[^|]*\|/);
+            const pipeCategory = pipeCategoryMatch ? pipeCategoryMatch[1].trim() : null;
+            const group = sportTag ? sportTag.trim() : (pipeCategory || rawGroup);
             const logoMatch = line.match(/tvg-logo="([^"]+)"/);
             const tvgId = (line.match(/tvg-id="([^"]+)"/) || [, null])[1];
             const logo = logoMatch ? logoMatch[1] : `https://placehold.co/512x512/111827/ffffff?text=${encodeURIComponent(name.substring(0, 5))}`;
@@ -367,6 +390,7 @@ function parseM3UChannels(data, source = {}) {
                 group,
                 logo,
                 tvgId,
+                eventStart: parseEventStartTime(name),
                 sourceName: source.name || "Kronos",
                 sourceUrl: source.url || ""
             };
@@ -645,23 +669,28 @@ app.get("/:base64Config/manifest.json", async (req, res) => {
             const catalogGroups = [...new Set(catalogChannels.map(c => c.group))]
                 .filter(g => g && g.trim())
                 .sort((a, b) => a.localeCompare(b, "it", { sensitivity: "base" }));
-            
-            console.log(`[DEBUG] Catalog "${listName}" groups:`, catalogGroups);
+
+            const hasLiveEvents = catalogChannels.some(c => c.eventStart);
+            const genreOptions = hasLiveEvents ? [LIVE_NOW_GENRE, NEXT_SOON_GENRE, ...catalogGroups] : catalogGroups;
+
+            console.log(`[DEBUG] Catalog "${listName}" groups:`, genreOptions);
 
             return {
                 id: toCatalogId(listName),
                 type: ADDON_TYPE,
                 name: listName,
-                extra: catalogGroups.length > 0 ? [{
+                extra: genreOptions.length > 0 ? [{
                     name: "genre",
-                    options: catalogGroups,
+                    options: genreOptions,
                     isRequired: false
                 }] : []
             };
         });
 
+        const manifestId = `org.stremio.kronos.channel.${crypto.createHash("sha1").update(configKey).digest("hex").substring(0, 10)}`;
+
         const manifest = {
-            id: "org.stremio.kronos.channel",
+            id: manifestId,
             version: RELEASE_VERSION,
             name: "Kronos",
             description: "TV",
@@ -752,11 +781,24 @@ async function catalogResponse(req, res) {
             totalChannels: channels.length
         });
         
-        const filteredChannels = sortChannelsByName(channels.filter(channel => {
-            const matchesSource = targetSource ? channel.sourceName === targetSource : true;
-            const matchesGroup = targetGroup ? normalizeGroupName(channel.group) === normalizeGroupName(targetGroup) : true;
-            return matchesSource && matchesGroup;
-        }));
+        const sourceChannels = channels.filter(channel => targetSource ? channel.sourceName === targetSource : true);
+
+        let filteredChannels;
+        if (targetGroup === LIVE_NOW_GENRE) {
+            const now = Date.now();
+            filteredChannels = sourceChannels
+                .filter(channel => channel.eventStart && channel.eventStart.getTime() <= now && channel.eventStart.getTime() >= now - LIVE_NOW_WINDOW_MS)
+                .sort((a, b) => a.eventStart - b.eventStart);
+        } else if (targetGroup === NEXT_SOON_GENRE) {
+            const now = Date.now();
+            filteredChannels = sourceChannels
+                .filter(channel => channel.eventStart && channel.eventStart.getTime() > now && channel.eventStart.getTime() <= now + NEXT_SOON_WINDOW_MS)
+                .sort((a, b) => a.eventStart - b.eventStart);
+        } else {
+            filteredChannels = sortChannelsByName(sourceChannels.filter(channel => {
+                return targetGroup ? normalizeGroupName(channel.group) === normalizeGroupName(targetGroup) : true;
+            }));
+        }
         
         console.log('[DEBUG CATALOG] Filtered channels:', filteredChannels.length);
         if (filteredChannels.length > 0) {

@@ -32,12 +32,35 @@ const CACHE_TTL = 30 * 60 * 1000;
 const HLS_REFRESH_TTL = 8 * 1000;
 const HLS_STALE_TTL = 5 * 60 * 1000;
 const ADDON_TYPE = "kronos";
-const RELEASE_VERSION = "1.7.1";
+const RELEASE_VERSION = "1.7.2";
 const BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 const LIVE_NOW_GENRE = "Live NOW";
 const LIVE_NOW_WINDOW_MS = 2 * 60 * 60 * 1000;
 const NEXT_SOON_GENRE = "Next soon";
 const NEXT_SOON_WINDOW_MS = 60 * 60 * 1000;
+const MAX_MANIFEST_GENRE_OPTIONS = 48;
+
+function clampManifestGenreOptions(options) {
+    const seen = new Set();
+    const normalized = [];
+
+    for (const value of Array.isArray(options) ? options : []) {
+        const cleaned = String(value || "").trim();
+        if (!cleaned) continue;
+
+        const key = cleaned.toLowerCase();
+        if (seen.has(key)) continue;
+
+        seen.add(key);
+        normalized.push(cleaned);
+    }
+
+    if (normalized.length <= MAX_MANIFEST_GENRE_OPTIONS) {
+        return normalized;
+    }
+
+    return normalized.slice(0, MAX_MANIFEST_GENRE_OPTIONS);
+}
 
 function decodeConfig(configKey) {
     try {
@@ -673,17 +696,17 @@ app.get("/:base64Config/manifest.json", async (req, res) => {
             const catalogChannels = listName === "TUTTI"
                 ? channels
                 : channels.filter(channel => channel.sourceName === listName);
-            
+
             console.log(`[DEBUG] Catalog "${listName}" has ${catalogChannels.length} channels`);
-            
+
             const catalogGroups = [...new Set(catalogChannels.map(c => c.group))]
                 .filter(g => g && g.trim())
                 .sort((a, b) => a.localeCompare(b, "it", { sensitivity: "base" }));
 
             const hasLiveEvents = catalogChannels.some(c => c.eventStart);
-            const genreOptions = hasLiveEvents ? [LIVE_NOW_GENRE, NEXT_SOON_GENRE, ...catalogGroups] : catalogGroups;
+            const genreOptions = clampManifestGenreOptions(hasLiveEvents ? [LIVE_NOW_GENRE, NEXT_SOON_GENRE, ...catalogGroups] : catalogGroups);
 
-            console.log(`[DEBUG] Catalog "${listName}" groups:`, genreOptions);
+            console.log(`[DEBUG] Catalog "${listName}" groups:`, genreOptions.length, 'of', catalogGroups.length);
 
             return {
                 id: toCatalogId(listName),

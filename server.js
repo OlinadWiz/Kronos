@@ -32,7 +32,7 @@ const CACHE_TTL = 30 * 60 * 1000;
 const HLS_REFRESH_TTL = 8 * 1000;
 const HLS_STALE_TTL = 5 * 60 * 1000;
 const ADDON_TYPE = "kronos";
-const RELEASE_VERSION = "1.7.0";
+const RELEASE_VERSION = "1.7.1";
 const BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 const LIVE_NOW_GENRE = "Live NOW";
 const LIVE_NOW_WINDOW_MS = 2 * 60 * 60 * 1000;
@@ -221,18 +221,24 @@ function getStreamCacheMode(config, sourceUrl) {
 }
 
 function getConfiguredLists(config) {
+    const readGroups = value => Array.isArray(value)
+        ? value.map(String).map(group => group.trim()).filter(Boolean)
+        : [];
+
     if (Array.isArray(config.l) && config.l.length) {
         return config.l
             .map((list, index) => ({
                 name: String(list.n || `Lista ${index + 1}`).trim() || `Lista ${index + 1}`,
-                url: String(list.u || "").trim()
+                url: String(list.u || "").trim(),
+                groups: readGroups(list.g || list.groups || [])
             }))
             .filter(list => list.url);
     }
 
     return [{
         name: String(config.ln || "Kronos").trim() || "Kronos",
-        url: String(config.u || "").trim()
+        url: String(config.u || "").trim(),
+        groups: readGroups(config.g || [])
     }].filter(list => list.url);
 }
 
@@ -571,32 +577,36 @@ async function fetchAndProcessChannels(configKey, config, options = {}) {
                 if (parsed.length > 0) {
                     console.log('[DEBUG FETCH] Sample parsed channel:', JSON.stringify(parsed[0], null, 2));
                 }
-                return parsed;
+                return { list, parsed };
             } catch (err) {
                 console.error(`[DEBUG FETCH] Failed to load list "${list.name}" (${list.url}):`, err.message);
-                return [];
+                return { list, parsed: [] };
             }
         }));
 
-        const channels = parsedChannelGroups.flat()
-            .filter(channel => {
-                if (config.gm === "list") return true;
-                if (config.gm === "bucket") return true;
-                if (selectedGroupSet.size === 0) return true;
-                const matches = selectedGroupSet.has(normalizeGroupName(channel.group));
-                if (!matches) {
-                    console.log(`[DEBUG FETCH] Filtering out channel "${channel.name}" with group "${channel.group}"`);
-                }
-                return matches;
-            })
-            .map(channel => ({
-                ...channel,
-                name: decorateChannelName(channel, configuredLists.length, config.gm),
-                group: config.gm === "bucket" ? bucketGroup : channel.group,
-                description: channel.tvgId && epgMap[normalizeEpgId(channel.tvgId)]
-                    ? epgMap[normalizeEpgId(channel.tvgId)]
-                    : "K.R.O.N.O.S. - Nessun dato guida oraria"
-            }));
+        const channels = parsedChannelGroups.flatMap(({ list, parsed }) => {
+            const listGroupSet = new Set((Array.isArray(list.groups) && list.groups.length ? list.groups : selectedGroups).map(normalizeGroupName));
+            return parsed
+                .filter(channel => {
+                    if (config.gm === "list") return true;
+                    if (config.gm === "bucket") return true;
+                    if (channel.eventStart) return true;
+                    if (listGroupSet.size === 0) return true;
+                    const matches = listGroupSet.has(normalizeGroupName(channel.group));
+                    if (!matches) {
+                        console.log(`[DEBUG FETCH] Filtering out channel "${channel.name}" with group "${channel.group}" from list "${list.name}"`);
+                    }
+                    return matches;
+                })
+                .map(channel => ({
+                    ...channel,
+                    name: decorateChannelName(channel, configuredLists.length, config.gm),
+                    group: config.gm === "bucket" ? bucketGroup : channel.group,
+                    description: channel.tvgId && epgMap[normalizeEpgId(channel.tvgId)]
+                        ? epgMap[normalizeEpgId(channel.tvgId)]
+                        : "K.R.O.N.O.S. - Nessun dato guida oraria"
+                }));
+        });
 
         console.log('[DEBUG FETCH] Final channel count:', channels.length);
         if (channels.length > 0) {
@@ -739,7 +749,12 @@ app.post("/api/analyze-link", async (req, res) => {
 app.post("/api/analyze-lists", async (req, res) => {
     try {
         const lists = getConfiguredLists({ l: req.body.lists || [] });
-        const parsedChannelGroups = await Promise.all(lists.map(async list => {
+        const selectedListIndex = Number.isInteger(req.body.selectedListIndex) ? Number(req.body.selectedListIndex) : null;
+        const targetLists = selectedListIndex !== null && lists[selectedListIndex]
+            ? [lists[selectedListIndex]]
+            : lists;
+
+        const parsedChannelGroups = await Promise.all(targetLists.map(async list => {
             const playlistData = await fetchPlaylist(list.url);
             return parseM3UChannels(playlistData, list);
         }));
@@ -757,7 +772,13 @@ app.post("/api/analyze-lists", async (req, res) => {
             .map(group => ({ name: group.name, count: group.count, sources: [...group.sources] }))
             .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
 
-        res.json({ totalChannels: channels.length, totalLists: lists.length, groups });
+        res.json({
+            totalChannels: channels.length,
+            totalLists: targetLists.length,
+            listIndex: selectedListIndex,
+            listName: targetLists[0]?.name || null,
+            groups
+        });
     } catch (err) {
         res.status(400).json({ error: "Impossibile analizzare le liste M3U" });
     }

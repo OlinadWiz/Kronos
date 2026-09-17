@@ -672,9 +672,29 @@
             background: rgba(255, 255, 255, 0.045);
         }
 
+        .playlist-row-actions {
+            display: flex;
+            align-items: stretch;
+            gap: 8px;
+        }
+
+        .playlist-analyze,
+        .playlist-remove {
+            min-height: 54px;
+            padding: 0 12px;
+            border-radius: 12px;
+            font-size: 0.76rem;
+            font-weight: 800;
+        }
+
+        .playlist-analyze {
+            color: #d9fbff;
+            background: rgba(56, 223, 244, 0.1);
+            border: 1px solid rgba(56, 223, 244, 0.25);
+        }
+
         .playlist-remove {
             width: 48px;
-            min-height: 54px;
             color: #fecdd3;
             background: rgba(251, 113, 133, 0.08);
             border: 1px solid rgba(251, 113, 133, 0.22);
@@ -1084,7 +1104,7 @@
                     <div>
                         <p class="brand-name">K.R.O.N.O.S.</p>
                         <p class="brand-subtitle">Kanal Routing Optimized Network On Stremio</p>
-                        <p class="brand-release">Release 1.7.0</p>
+                        <p class="brand-release">Release 1.7.1</p>
                     </div>
                 </div>
                 <div class="status-pill">Addon builder online</div>
@@ -1332,6 +1352,8 @@
         let analysisData = null;
         let analysisSignature = '';
         let groupsInsertedFromAnalysis = false;
+        let selectedListIndex = null;
+        let listGroupState = {};
 
         function parseGroups() {
             return groups.value.split(',').map(item => item.trim()).filter(Boolean);
@@ -1341,20 +1363,49 @@
             return String(group || '').trim().toLowerCase();
         }
 
+        function toCompactGroupKey(group) {
+            return normalizeGroupName(group);
+        }
+
         function getPlaylistRows() {
             return [...playlistList.querySelectorAll('.playlist-row')];
+        }
+
+        function getListGroupsForIndex(index) {
+            const groups = listGroupState[index];
+            return Array.isArray(groups) ? [...groups] : [];
+        }
+
+        function flattenSelectedListGroups() {
+            const output = [];
+            const seen = new Set();
+            getPlaylistRows().forEach((row, index) => {
+                const groups = getListGroupsForIndex(index);
+                groups.forEach(group => {
+                    const key = toCompactGroupKey(group);
+                    if (!key || seen.has(key)) return;
+                    seen.add(key);
+                    output.push(group);
+                });
+            });
+            return output;
         }
 
         function getLists() {
             return getPlaylistRows().map((row, index) => {
                 const name = row.querySelector('[data-list-name]').value.trim() || `Lista ${index + 1}`;
                 const url = row.querySelector('[data-list-url]').value.trim();
-                return { n: name, u: url };
+                const list = { n: name, u: url };
+                const selectedGroups = getListGroupsForIndex(index);
+                if (selectedGroups.length) {
+                    list.g = selectedGroups;
+                }
+                return list;
             }).filter(list => list.u);
         }
 
         function getListSignature(lists = getLists()) {
-            return JSON.stringify(lists.map(list => ({ n: list.n, u: list.u })));
+            return JSON.stringify(lists.map(list => ({ n: list.n, u: list.u, g: Array.isArray(list.g) ? list.g : [] })));
         }
 
         function createPlaylistRow(data = {}) {
@@ -1369,17 +1420,35 @@
                     <label>URL lista M3U <small>obbligatorio</small></label>
                     <input type="url" data-list-url required placeholder="https://example.com/lista.m3u" autocomplete="url">
                 </div>
-                <button type="button" class="playlist-remove" title="Rimuovi lista" aria-label="Rimuovi lista">X</button>
+                <div class="playlist-row-actions">
+                    <button type="button" class="playlist-analyze" title="Analizza gruppi per questa lista" aria-label="Analizza gruppi per questa lista">Filtri</button>
+                    <button type="button" class="playlist-remove" title="Rimuovi lista" aria-label="Rimuovi lista">X</button>
+                </div>
             `;
 
-            row.querySelector('[data-list-name]').value = data.n || `Lista ${getPlaylistRows().length + 1}`;
+            const index = getPlaylistRows().length;
+            row.querySelector('[data-list-name]').value = data.n || `Lista ${index + 1}`;
             row.querySelector('[data-list-url]').value = data.u || '';
+
+            row.querySelector('.playlist-analyze').addEventListener('click', async function() {
+                selectedListIndex = index;
+                await fetchAnalysis(index);
+            });
+
             row.querySelector('.playlist-remove').addEventListener('click', function() {
                 if (getPlaylistRows().length === 1) {
                     row.querySelector('[data-list-url]').value = '';
                     row.querySelector('[data-list-name]').value = 'Lista 1';
                 } else {
                     row.remove();
+                }
+                listGroupState = {};
+                getPlaylistRows().forEach((currentRow, rowIndex) => {
+                    const legacyGroups = currentRow.dataset.listGroups ? JSON.parse(currentRow.dataset.listGroups) : [];
+                    if (legacyGroups.length) listGroupState[rowIndex] = legacyGroups;
+                });
+                if (selectedListIndex !== null && selectedListIndex >= getPlaylistRows().length) {
+                    selectedListIndex = getPlaylistRows().length - 1;
                 }
                 resetAnalysisState();
                 updatePreview();
@@ -1405,13 +1474,22 @@
             groupOptions.innerHTML = '';
         }
 
-        async function fetchAnalysis() {
+        function getSelectedListName(index = selectedListIndex) {
+            if (index === null || index === undefined) return 'tutte le liste';
+            const list = getLists()[index];
+            return list?.n || `Lista ${index + 1}`;
+        }
+
+        async function fetchAnalysis(selectedIndex = selectedListIndex) {
             const lists = getLists();
             const firstEmptyUrl = getPlaylistRows().find(row => !row.querySelector('[data-list-url]').value.trim());
             if (!lists.length || firstEmptyUrl) {
                 firstEmptyUrl?.querySelector('[data-list-url]').reportValidity();
                 return null;
             }
+
+            const targetIndex = Number.isInteger(selectedIndex) ? selectedIndex : null;
+            selectedListIndex = targetIndex;
 
             analyzeButton.disabled = true;
             analyzeButton.textContent = 'Analisi...';
@@ -1422,6 +1500,7 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         lists,
+                        selectedListIndex: targetIndex,
                         proxyUrl: useProxy.checked ? proxyUrl.value.trim() : null,
                         proxyPassword: useProxy.checked ? proxyPassword.value.trim() : null
                     })
@@ -1443,11 +1522,15 @@
         }
 
         function renderAnalysis() {
-            const totalGroups = analysisData.groups.length;
+            const totalGroups = analysisData?.groups?.length || 0;
+            const listName = getSelectedListName();
             analysisTitle.textContent = `${totalGroups} gruppi individuati`;
-            analysisSummary.textContent = `${analysisData.totalChannels} canali letti da ${analysisData.totalLists} liste. I canali aggregati includeranno il nome lista tra parentesi.`;
+            analysisSummary.textContent = selectedListIndex !== null
+                ? `${analysisData.totalChannels} canali letti in "${listName}". Inserisci i filtri applicabili a questa lista.`
+                : `${analysisData.totalChannels} canali letti da ${analysisData.totalLists} liste. I canali aggregati includeranno il nome lista tra parentesi.`;
             groupOptions.innerHTML = '';
 
+            const savedGroups = selectedListIndex !== null ? getListGroupsForIndex(selectedListIndex) : [];
             analysisData.groups.forEach((group, index) => {
                 const label = document.createElement('label');
                 label.className = 'group-option';
@@ -1455,7 +1538,7 @@
                 const input = document.createElement('input');
                 input.type = 'checkbox';
                 input.value = group.name;
-                input.checked = index < 8;
+                input.checked = savedGroups.length ? savedGroups.includes(group.name) : index < 8;
 
                 const name = document.createElement('span');
                 name.textContent = group.name;
@@ -1475,25 +1558,34 @@
         }
 
         function setGroupsFromAnalysis() {
+            if (selectedListIndex === null || selectedListIndex >= getLists().length) {
+                showToast('Seleziona prima una lista per applicare i filtri');
+                return;
+            }
+
             const selectedGroups = getSelectedAnalyzedGroups();
             if (!selectedGroups.length) {
                 showToast('Seleziona almeno un gruppo individuato');
                 return;
             }
 
-            groups.value = selectedGroups.join(', ');
+            listGroupState[selectedListIndex] = selectedGroups;
+            groups.value = flattenSelectedListGroups().join(', ');
             groupsInsertedFromAnalysis = true;
             updatePreview();
-            showToast('Gruppi inseriti');
+            showToast(`Filtri salvati per ${getSelectedListName()}`);
         }
 
         function getConfig() {
-            const lists = getLists();
+            const lists = getLists().map((list, index) => {
+                const selectedGroups = getListGroupsForIndex(index);
+                return { ...list, ...(selectedGroups.length ? { g: selectedGroups } : {}) };
+            });
             return {
                 l: lists,
                 u: lists[0]?.u || '',
                 e: epgUrl.value.trim() || null,
-                g: parseGroups(),
+                g: flattenSelectedListGroups(),
                 gm: groupsInsertedFromAnalysis ? 'filter' : 'list',
                 p: useProxy.checked ? proxyUrl.value.trim() || null : null,
                 pp: useProxy.checked ? proxyPassword.value.trim() || null : null
@@ -1568,12 +1660,13 @@
                 return config.l
                     .map((list, index) => ({
                         n: list.n || `Lista ${index + 1}`,
-                        u: list.u || ''
+                        u: list.u || '',
+                        g: Array.isArray(list.g) ? [...list.g] : []
                     }))
                     .filter(list => list.u);
             }
 
-            return config.u ? [{ n: config.ln || 'Lista 1', u: config.u }] : [];
+            return config.u ? [{ n: config.ln || 'Lista 1', u: config.u, g: Array.isArray(config.g) ? [...config.g] : [] }] : [];
         }
 
         function setCurrentManifestFromToken(token) {
@@ -1587,11 +1680,20 @@
 
         function applyConfig(config, token = '') {
             const lists = getListsFromConfig(config);
+            listGroupState = {};
+            lists.forEach((list, index) => {
+                if (list.g && list.g.length) {
+                    listGroupState[index] = [...list.g];
+                }
+            });
+            if (!Object.keys(listGroupState).length && Array.isArray(config.g) && config.g.length && lists.length === 1) {
+                listGroupState[0] = [...config.g];
+            }
             playlistList.innerHTML = '';
-            (lists.length ? lists : [{ n: 'Lista 1', u: '' }]).forEach(createPlaylistRow);
+            (lists.length ? lists : [{ n: 'Lista 1', u: '', g: [] }]).forEach(createPlaylistRow);
 
             epgUrl.value = config.e || '';
-            groups.value = Array.isArray(config.g) ? config.g.join(', ') : '';
+            groups.value = flattenSelectedListGroups().join(', ');
             useProxy.checked = Boolean(config.p);
             proxyUrl.value = config.p || '';
             proxyPassword.value = config.pp || '';
@@ -1630,42 +1732,19 @@
                 return null;
             }
 
+            config.l = config.l.map((list, index) => ({
+                n: list.n,
+                u: list.u,
+                ...(getListGroupsForIndex(index).length ? { g: getListGroupsForIndex(index) } : {})
+            }));
+
             if (!config.g.length) {
                 config.gm = 'list';
-                config.g = config.l.map(list => list.n);
+                config.g = [];
                 return config;
             }
 
-            if (groupsInsertedFromAnalysis && analysisSignature === getListSignature(config.l)) {
-                config.gm = 'filter';
-                return config;
-            }
-
-            if (config.g.length === 1) {
-                config.gm = 'bucket';
-                return config;
-            }
-
-            const analyzed = analysisSignature === getListSignature(config.l) && analysisData ? analysisData : await fetchAnalysis();
-            if (!analyzed) {
-                config.gm = 'bucket';
-                config.g = [config.g[0]];
-                showToast('Filtro non verificato: includo tutto nel primo gruppo');
-                return config;
-            }
-
-            const realGroups = new Map(analyzed.groups.map(group => [normalizeGroupName(group.name), group.name]));
-            const matchedGroups = config.g.map(group => realGroups.get(normalizeGroupName(group))).filter(Boolean);
-
-            if (matchedGroups.length === config.g.length) {
-                config.g = matchedGroups;
-                config.gm = 'filter';
-                return config;
-            }
-
-            config.gm = 'bucket';
-            config.g = [config.g[0]];
-            showToast('Non ho potuto filtrare: includo tutto nel primo gruppo');
+            config.gm = 'filter';
             return config;
         }
 

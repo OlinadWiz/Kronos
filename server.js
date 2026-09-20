@@ -33,7 +33,7 @@ const HLS_REFRESH_TTL = 1 * 1000;
 const HLS_VOD_REFRESH_TTL = 60 * 1000;
 const HLS_STALE_TTL = 5 * 60 * 1000;
 const ADDON_TYPE = "kronos";
-const RELEASE_VERSION = "1.7.4";
+const RELEASE_VERSION = "1.7.5";
 const BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 const LIVE_NOW_GENRE = "Live NOW";
 const LIVE_NOW_WINDOW_MS = 2 * 60 * 60 * 1000;
@@ -196,7 +196,7 @@ function normalizeEpgId(id) {
     return key;
 }
 
-function getResolverExtractorUrl(config, sourceUrl) {
+function getResolverExtractorUrl(config, sourceUrl, headers = {}) {
     if (!config.p) return sourceUrl;
 
     const proxy = new URL(config.p);
@@ -210,10 +210,18 @@ function getResolverExtractorUrl(config, sourceUrl) {
         proxy.searchParams.set("api_password", config.pp);
     }
 
+    if (headers && typeof headers === "object") {
+        Object.entries(headers).forEach(([k, v]) => {
+            if (v) {
+                proxy.searchParams.set(`h_${k.toLowerCase()}`, v);
+            }
+        });
+    }
+
     return proxy.toString();
 }
 
-function getStreamFetchUrl(config, sourceUrl) {
+function getStreamFetchUrl(config, sourceUrl, headers = {}) {
     if (!config.p) return sourceUrl;
 
     try {
@@ -225,7 +233,7 @@ function getStreamFetchUrl(config, sourceUrl) {
         return sourceUrl;
     }
 
-    return getResolverExtractorUrl(config, sourceUrl);
+    return getResolverExtractorUrl(config, sourceUrl, headers);
 }
 
 function getStreamCacheMode(config, sourceUrl) {
@@ -352,10 +360,10 @@ async function getLogoDataUri(logoUrl) {
     }
 }
 
-async function getCachedHLS(cacheKey, sourceUrl, config = {}) {
+async function getCachedHLS(cacheKey, sourceUrl, config = {}, channelHeaders = {}) {
     const cached = memoryCache.hlsData[cacheKey];
     const now = Date.now();
-    const fetchUrl = getStreamFetchUrl(config, sourceUrl);
+    const fetchUrl = getStreamFetchUrl(config, sourceUrl, channelHeaders);
     const ttl = (cached && cached.isVod) ? HLS_VOD_REFRESH_TTL : HLS_REFRESH_TTL;
 
     if (cached && now - cached.updatedAt < ttl) {
@@ -363,12 +371,23 @@ async function getCachedHLS(cacheKey, sourceUrl, config = {}) {
     }
 
     try {
+        const reqHeaders = {
+            "User-Agent": channelHeaders["User-Agent"] || channelHeaders["user-agent"] || BROWSER_USER_AGENT,
+            "Accept": "application/x-mpegURL, audio/mpegurl, text/plain, */*"
+        };
+        if (channelHeaders["Cookie"] || channelHeaders["cookie"]) {
+            reqHeaders["Cookie"] = channelHeaders["Cookie"] || channelHeaders["cookie"];
+        }
+        if (channelHeaders["Authorization"] || channelHeaders["authorization"]) {
+            reqHeaders["Authorization"] = channelHeaders["Authorization"] || channelHeaders["authorization"];
+        }
+        if (channelHeaders["Referer"] || channelHeaders["referer"]) {
+            reqHeaders["Referer"] = channelHeaders["Referer"] || channelHeaders["referer"];
+        }
+
         const response = await axios.get(fetchUrl, {
             timeout: config.p ? 30000 : 15000,
-            headers: {
-                "User-Agent": BROWSER_USER_AGENT,
-                "Accept": "application/x-mpegURL, audio/mpegurl, text/plain, */*"
-            },
+            headers: reqHeaders,
             responseType: "text",
             maxContentLength: 5 * 1024 * 1024
         });
@@ -444,6 +463,7 @@ function parseM3UChannels(data, source = {}) {
                     group: group || "ITALIA",
                     logo,
                     tvgId,
+                    headers: {},
                     eventStart: parseEventStartTime(name),
                     sourceName: source.name || "Kronos",
                     sourceUrl: source.url || ""
@@ -464,10 +484,26 @@ function parseM3UChannels(data, source = {}) {
                 group,
                 logo,
                 tvgId,
+                headers: {},
                 eventStart: parseEventStartTime(name),
                 sourceName: source.name || "Kronos",
                 sourceUrl: source.url || ""
             };
+        } else if (line.startsWith("#EXTVLCOPT:") && currentChannel) {
+            const opt = line.substring(11).trim();
+            if (opt.startsWith("http-user-agent=")) {
+                currentChannel.headers["User-Agent"] = opt.substring(16).trim();
+            } else if (opt.startsWith("http-cookie=")) {
+                currentChannel.headers["Cookie"] = opt.substring(12).trim();
+            } else if (opt.startsWith("http-referrer=") || opt.startsWith("http-referer=")) {
+                currentChannel.headers["Referer"] = opt.split("=")[1].trim();
+            } else if (opt.startsWith("http-header=")) {
+                const hLine = opt.substring(12).trim();
+                const idx = hLine.indexOf(":");
+                if (idx > 0) {
+                    currentChannel.headers[hLine.substring(0, idx).trim()] = hLine.substring(idx + 1).trim();
+                }
+            }
         } else if (line.startsWith("http") && currentChannel) {
             currentChannel.url = line;
             currentChannel.id = "channel_" + crypto.createHash("sha1").update(`${source.url || ""}|${line}`).digest("hex").substring(0, 20);
@@ -555,6 +591,8 @@ function isHlsUrl(url) {
 
 function buildStream(channel, host, configKey, config) {
     const isHls = isHlsUrl(channel.url);
+    const hasHeaders = channel.headers && Object.keys(channel.headers).length > 0;
+    const requestHeaders = hasHeaders ? channel.headers : undefined;
 
     if (isHls) {
         return {
@@ -563,12 +601,13 @@ function buildStream(channel, host, configKey, config) {
             url: `${host}/${configKey}/hls/${channel.id}/index.m3u8`,
             behaviorHints: {
                 notWebReady: true,
-                bingeGroup: `kronos-${channel.id}`
+                bingeGroup: `kronos-${channel.id}`,
+                ...(requestHeaders ? { requestHeaders } : {})
             }
         };
     }
 
-    const streamUrl = config.p ? getResolverExtractorUrl(config, channel.url) : channel.url;
+    const streamUrl = config.p ? getResolverExtractorUrl(config, channel.url, channel.headers) : channel.url;
 
     if (isPlayableHttpUrl(streamUrl)) {
         return {
@@ -577,7 +616,8 @@ function buildStream(channel, host, configKey, config) {
             url: streamUrl,
             behaviorHints: {
                 notWebReady: true,
-                bingeGroup: `kronos-${channel.id}`
+                bingeGroup: `kronos-${channel.id}`,
+                ...(requestHeaders ? { requestHeaders } : {})
             }
         };
     }
@@ -969,7 +1009,7 @@ app.get("/:base64Config/hls/:id/index.m3u8", async (req, res) => {
         if (!c) return res.status(404).send("#EXTM3U\n");
 
         const cacheKey = `${configKey}:${c.id}:${getStreamCacheMode(config, c.url)}`;
-        const playlist = await getCachedHLS(cacheKey, c.url, config);
+        const playlist = await getCachedHLS(cacheKey, c.url, config, c.headers);
 
         res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
         res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate, max-age=0");

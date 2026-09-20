@@ -1111,7 +1111,7 @@
                     <div>
                         <p class="brand-name">K.R.O.N.O.S.</p>
                         <p class="brand-subtitle">Kanal Routing Optimized Network On Stremio</p>
-                        <p class="brand-release">Release 1.7.1</p>
+                        <p class="brand-release" id="brandRelease">Release 1.7.3</p>
                     </div>
                 </div>
                 <div class="status-pill">Addon builder online</div>
@@ -1295,6 +1295,17 @@
     <div id="toast" class="toast" role="status" aria-live="polite">Link copiato negli appunti</div>
 
     <script>
+        // Carica versione dinamica da /health
+        fetch('/health')
+            .then(res => res.json())
+            .then(data => {
+                if (data && data.version) {
+                    const el = document.getElementById('brandRelease');
+                    if (el) el.textContent = `Release ${data.version}`;
+                }
+            })
+            .catch(() => {});
+
         // Gestione Disclaimer
         const disclaimerPanel = document.getElementById('disclaimerPanel');
         const disclaimerToggle = disclaimerPanel.querySelector('.disclaimer-toggle');

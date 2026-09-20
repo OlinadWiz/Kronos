@@ -29,10 +29,11 @@ const memoryCache = {
     isUpdating: {}
 };
 const CACHE_TTL = 30 * 60 * 1000;
-const HLS_REFRESH_TTL = 8 * 1000;
+const HLS_REFRESH_TTL = 1 * 1000;
+const HLS_VOD_REFRESH_TTL = 60 * 1000;
 const HLS_STALE_TTL = 5 * 60 * 1000;
 const ADDON_TYPE = "kronos";
-const RELEASE_VERSION = "1.7.2";
+const RELEASE_VERSION = "1.7.3";
 const BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 const LIVE_NOW_GENRE = "Live NOW";
 const LIVE_NOW_WINDOW_MS = 2 * 60 * 60 * 1000;
@@ -214,7 +215,6 @@ function getResolverExtractorUrl(config, sourceUrl) {
 
 function getStreamFetchUrl(config, sourceUrl) {
     if (!config.p) return sourceUrl;
-    if (isHlsUrl(sourceUrl)) return sourceUrl;
 
     try {
         const source = new URL(sourceUrl);
@@ -304,9 +304,14 @@ function toAbsoluteUrl(value, baseUrl) {
 }
 
 function rewriteHLSPlaylist(playlist, baseUrl) {
-    return String(playlist).split(/\r?\n/).map(line => {
+    return String(playlist || "").split(/\r?\n/).map(line => {
         const trimmed = line.trim();
-        if (!trimmed || trimmed.startsWith("#")) return line;
+        if (!trimmed) return line;
+        if (trimmed.startsWith("#")) {
+            return line.replace(/URI=["']([^"']+)["']/g, (match, p1) => {
+                return `URI="${toAbsoluteUrl(p1, baseUrl)}"`;
+            });
+        }
         return toAbsoluteUrl(trimmed, baseUrl);
     }).join("\n");
 }
@@ -351,8 +356,9 @@ async function getCachedHLS(cacheKey, sourceUrl, config = {}) {
     const cached = memoryCache.hlsData[cacheKey];
     const now = Date.now();
     const fetchUrl = getStreamFetchUrl(config, sourceUrl);
+    const ttl = (cached && cached.isVod) ? HLS_VOD_REFRESH_TTL : HLS_REFRESH_TTL;
 
-    if (cached && now - cached.updatedAt < HLS_REFRESH_TTL) {
+    if (cached && now - cached.updatedAt < ttl) {
         return cached.playlist;
     }
 
@@ -362,12 +368,22 @@ async function getCachedHLS(cacheKey, sourceUrl, config = {}) {
             headers: {
                 "User-Agent": BROWSER_USER_AGENT,
                 "Accept": "application/x-mpegURL, audio/mpegurl, text/plain, */*"
-            }
+            },
+            responseType: "text",
+            maxContentLength: 5 * 1024 * 1024
         });
 
+        const dataStr = String(response.data || "");
+        if (!dataStr.includes("#EXTM3U") && !dataStr.includes("#EXT")) {
+            console.warn('[HLS WARNING] Content fetched is not a valid HLS playlist:', fetchUrl.substring(0, 80));
+            if (cached) return cached.playlist;
+            throw new Error("Sorgente non valida come playlist HLS");
+        }
+
+        const isVod = dataStr.includes("#EXT-X-ENDLIST");
         const finalUrl = response.request?.res?.responseUrl || fetchUrl;
-        const playlist = rewriteHLSPlaylist(response.data, finalUrl);
-        memoryCache.hlsData[cacheKey] = { playlist, updatedAt: now };
+        const playlist = rewriteHLSPlaylist(dataStr, finalUrl);
+        memoryCache.hlsData[cacheKey] = { playlist, updatedAt: now, isVod };
         return playlist;
     } catch (err) {
         if (cached && now - cached.updatedAt < HLS_STALE_TTL) {
@@ -399,13 +415,42 @@ function parseM3UChannels(data, source = {}) {
     const channels = [];
     let currentChannel = null;
 
-    console.log(`[PARSE M3U] Parsing playlist from ${source.name}, total lines: ${lines.length}`);
+    const hasMacItTag = lines.some(l => /┃IT|\|IT/i.test(l));
+
+    console.log(`[PARSE M3U] Parsing playlist from ${source.name}, total lines: ${lines.length}, hasMacItTag: ${hasMacItTag}`);
 
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i].trim();
         if (line.startsWith("#EXTINF:")) {
             const name = (line.match(/,(.+)$/) || [, "Canale Sconosciuto"])[1].trim();
             const rawGroup = (line.match(/group-title="([^"]+)"/) || [, "Altri Canali"])[1].trim();
+
+            if (hasMacItTag) {
+                const macMatch = rawGroup.match(/(?:┃IT[^┃]*┃|\|IT[^|]*\|)(.+)$/i) || name.match(/(?:┃IT[^┃]*┃|\|IT[^|]*\|)(.+)$/i);
+                if (!macMatch) {
+                    currentChannel = null;
+                    continue;
+                }
+
+                let group = macMatch[1].trim();
+                group = group.replace(/[\s\u2000-\u3300\u2600-\u27BF\u1F000-\u1F9FF]+$/g, "").trim();
+
+                const logoMatch = line.match(/tvg-logo="([^"]+)"/);
+                const tvgId = (line.match(/tvg-id="([^"]+)"/) || [, null])[1];
+                const logo = logoMatch ? logoMatch[1] : `https://placehold.co/512x512/111827/ffffff?text=${encodeURIComponent(name.substring(0, 5))}`;
+
+                currentChannel = {
+                    name,
+                    group: group || "ITALIA",
+                    logo,
+                    tvgId,
+                    eventStart: parseEventStartTime(name),
+                    sourceName: source.name || "Kronos",
+                    sourceUrl: source.url || ""
+                };
+                continue;
+            }
+
             const sportTag = (name.match(/^\[([^\]]+)\]/) || [, null])[1];
             const pipeCategoryMatch = name.match(/^([^|]+)\|[^|]*\|/);
             const pipeCategory = pipeCategoryMatch ? pipeCategoryMatch[1].trim() : null;
@@ -509,7 +554,9 @@ function isHlsUrl(url) {
 }
 
 function buildStream(channel, host, configKey, config) {
-    if (config.p || isHlsUrl(channel.url)) {
+    const isHls = isHlsUrl(channel.url);
+
+    if (isHls) {
         return {
             title: channel.name,
             name: "Kronos",
@@ -521,11 +568,13 @@ function buildStream(channel, host, configKey, config) {
         };
     }
 
-    if (isPlayableHttpUrl(channel.url)) {
+    const streamUrl = config.p ? getResolverExtractorUrl(config, channel.url) : channel.url;
+
+    if (isPlayableHttpUrl(streamUrl)) {
         return {
             title: channel.name,
             name: "Kronos",
-            url: channel.url,
+            url: streamUrl,
             behaviorHints: {
                 notWebReady: true,
                 bingeGroup: `kronos-${channel.id}`
@@ -923,8 +972,9 @@ app.get("/:base64Config/hls/:id/index.m3u8", async (req, res) => {
         const playlist = await getCachedHLS(cacheKey, c.url, config);
 
         res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
-        res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+        res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate, max-age=0");
         res.setHeader("Pragma", "no-cache");
+        res.setHeader("Expires", "0");
         res.send(playlist);
     } catch (err) {
         console.error('[HLS ERROR]', req.params.id, err.message);

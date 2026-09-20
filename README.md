@@ -105,12 +105,12 @@ L'addon supporta tre modalità di organizzazione:
 
 ## 📝 Note Tecniche
 
-- **Versione**: 1.7.2
+- **Versione**: 1.7.3
 - **Porta locale**: 7000 (sviluppo)
 - **Porta Hugging Face**: 7860 (produzione)
 - **Node.js**: >= 18
 - **Dipendenze**: Express, Axios, xml2js, https-proxy-agent
-- **Cache**: 30 minuti per canali, 8 secondi per stream HLS
+- **Cache**: 30 minuti per canali, 1 secondo per stream HLS Live
 
 ## 🐛 Troubleshooting
 

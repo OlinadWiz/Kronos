@@ -33,7 +33,7 @@ const HLS_REFRESH_TTL = 1 * 1000;
 const HLS_VOD_REFRESH_TTL = 60 * 1000;
 const HLS_STALE_TTL = 5 * 60 * 1000;
 const ADDON_TYPE = "kronos";
-const RELEASE_VERSION = "1.7.3";
+const RELEASE_VERSION = "1.7.4";
 const BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 const LIVE_NOW_GENRE = "Live NOW";
 const LIVE_NOW_WINDOW_MS = 2 * 60 * 60 * 1000;
@@ -433,7 +433,7 @@ function parseM3UChannels(data, source = {}) {
                 }
 
                 let group = macMatch[1].trim();
-                group = group.replace(/[\s\u2000-\u3300\u2600-\u27BF\u1F000-\u1F9FF]+$/g, "").trim();
+                group = group.replace(/[^\w\s|()\[\]\-\+\&]+$/g, "").trim();
 
                 const logoMatch = line.match(/tvg-logo="([^"]+)"/);
                 const tvgId = (line.match(/tvg-id="([^"]+)"/) || [, null])[1];

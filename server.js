@@ -33,7 +33,7 @@ const HLS_REFRESH_TTL = 1 * 1000;
 const HLS_VOD_REFRESH_TTL = 60 * 1000;
 const HLS_STALE_TTL = 5 * 60 * 1000;
 const ADDON_TYPE = "kronos";
-const RELEASE_VERSION = "1.7.5";
+const RELEASE_VERSION = "1.7.6";
 const BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 const LIVE_NOW_GENRE = "Live NOW";
 const LIVE_NOW_WINDOW_MS = 2 * 60 * 60 * 1000;
@@ -607,13 +607,11 @@ function buildStream(channel, host, configKey, config) {
         };
     }
 
-    const streamUrl = config.p ? getResolverExtractorUrl(config, channel.url, channel.headers) : channel.url;
-
-    if (isPlayableHttpUrl(streamUrl)) {
+    if (isPlayableHttpUrl(channel.url)) {
         return {
             title: channel.name,
             name: "Kronos",
-            url: streamUrl,
+            url: `${host}/${configKey}/live/${channel.id}.ts`,
             behaviorHints: {
                 notWebReady: true,
                 bingeGroup: `kronos-${channel.id}`,
@@ -1023,6 +1021,100 @@ app.get("/:base64Config/hls/:id/index.m3u8", async (req, res) => {
         }
         res.status(502).send("#EXTM3U\n#EXT-X-ENDLIST\n");
     }
+});
+
+app.get("/:base64Config/live/:id.ts", async (req, res) => {
+    const configKey = req.params.base64Config;
+    let config;
+    try {
+        config = decodeConfig(configKey);
+    } catch (err) {
+        return res.status(400).send("Invalid configuration token");
+    }
+
+    const channel = await getChannelById(configKey, config, req.params.id);
+    if (!channel) return res.status(404).send("Canale non trovato");
+
+    const fetchUrl = getStreamFetchUrl(config, channel.url, channel.headers);
+    const channelHeaders = channel.headers || {};
+    const reqHeaders = {
+        "User-Agent": channelHeaders["User-Agent"] || channelHeaders["user-agent"] || BROWSER_USER_AGENT,
+        "Accept": "*/*"
+    };
+
+    if (channelHeaders["Cookie"] || channelHeaders["cookie"]) {
+        reqHeaders["Cookie"] = channelHeaders["Cookie"] || channelHeaders["cookie"];
+    }
+    if (channelHeaders["Authorization"] || channelHeaders["authorization"]) {
+        reqHeaders["Authorization"] = channelHeaders["Authorization"] || channelHeaders["authorization"];
+    }
+    if (channelHeaders["Referer"] || channelHeaders["referer"]) {
+        reqHeaders["Referer"] = channelHeaders["Referer"] || channelHeaders["referer"];
+    }
+
+    res.setHeader("Content-Type", "video/mp2t");
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate, max-age=0");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+    res.setHeader("Connection", "keep-alive");
+
+    let isClientConnected = true;
+    let activeUpstream = null;
+    let reconnectTimer = null;
+
+    req.on("close", () => {
+        isClientConnected = false;
+        if (reconnectTimer) clearTimeout(reconnectTimer);
+        if (activeUpstream) {
+            try {
+                activeUpstream.destroy();
+            } catch (e) {}
+        }
+    });
+
+    async function connectUpstream() {
+        if (!isClientConnected) return;
+
+        try {
+            const response = await axios.get(fetchUrl, {
+                headers: reqHeaders,
+                responseType: "stream",
+                timeout: config.p ? 30000 : 20000,
+                maxRedirects: 5,
+                validateStatus: (status) => status >= 200 && status < 300
+            });
+
+            activeUpstream = response.data;
+
+            activeUpstream.on("data", (chunk) => {
+                if (isClientConnected) {
+                    res.write(chunk);
+                }
+            });
+
+            activeUpstream.on("end", () => {
+                if (isClientConnected) {
+                    console.log(`[LIVE PROXY] Upstream ended for ${channel.name}, reconnecting...`);
+                    reconnectTimer = setTimeout(connectUpstream, 1000);
+                }
+            });
+
+            activeUpstream.on("error", (err) => {
+                if (isClientConnected) {
+                    console.error(`[LIVE PROXY ERROR] Upstream error for ${channel.name}: ${err.message}, reconnecting...`);
+                    reconnectTimer = setTimeout(connectUpstream, 1500);
+                }
+            });
+
+        } catch (err) {
+            if (isClientConnected) {
+                console.error(`[LIVE PROXY FETCH ERROR] ${channel.name}: ${err.message}, retrying in 2s...`);
+                reconnectTimer = setTimeout(connectUpstream, 2000);
+            }
+        }
+    }
+
+    connectUpstream();
 });
 
 app.get("/:base64Config/stream/:type/:id.json", async (req, res) => {

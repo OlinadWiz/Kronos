@@ -105,7 +105,7 @@ L'addon supporta tre modalità di organizzazione:
 
 ## 📝 Note Tecniche
 
-- **Versione**: 1.7.5
+- **Versione**: 1.7.6
 - **Porta locale**: 7000 (sviluppo)
 - **Porta Hugging Face**: 7860 (produzione)
 - **Node.js**: >= 18

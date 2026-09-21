@@ -33,7 +33,7 @@ const HLS_REFRESH_TTL = 1 * 1000;
 const HLS_VOD_REFRESH_TTL = 60 * 1000;
 const HLS_STALE_TTL = 5 * 60 * 1000;
 const ADDON_TYPE = "kronos";
-const RELEASE_VERSION = "1.7.9";
+const RELEASE_VERSION = "1.8.0";
 const BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 const LIVE_NOW_GENRE = "Live NOW";
 const LIVE_NOW_WINDOW_MS = 2 * 60 * 60 * 1000;
@@ -201,21 +201,21 @@ function getResolverExtractorUrl(config, sourceUrl, headers = {}) {
 
     const proxy = new URL(config.p);
     const cleanPath = proxy.pathname.replace(/\/$/, "");
-    const isWebExtractorLink = /watch\.php|dlive|streamed|sport99|vaughn|embed/i.test(sourceUrl) || (!/\.(m3u8|ts|mp4|mkv|avi|flv)(?:[?#].*)?$/i.test(sourceUrl) && !/extension=(ts|m3u8)/i.test(sourceUrl));
+    const isWebExtractorLink = /watch\.php|dlive|vavoo|cdnlivetv|embed\.st|sport99|vaughn|embed/i.test(sourceUrl) || (!/\.(m3u8|ts|mp4|mkv|avi|flv)(?:[?#].*)?$/i.test(sourceUrl) && !/extension=(ts|m3u8)/i.test(sourceUrl));
 
     if (isWebExtractorLink) {
         proxy.pathname = `${cleanPath}/extractor/video.m3u8`;
         proxy.search = "";
         proxy.searchParams.set("d", sourceUrl);
-        proxy.searchParams.set("redirect_stream", "false");
+        proxy.searchParams.set("redirect_stream", "true");
     } else if (isHlsUrl(sourceUrl) || /extension=m3u8/i.test(sourceUrl)) {
         proxy.pathname = `${cleanPath}/proxy/hls/manifest.m3u8`;
         proxy.search = "";
-        proxy.searchParams.set("url", sourceUrl);
+        proxy.searchParams.set("d", sourceUrl);
     } else {
         proxy.pathname = `${cleanPath}/proxy/stream`;
         proxy.search = "";
-        proxy.searchParams.set("url", sourceUrl);
+        proxy.searchParams.set("d", sourceUrl);
     }
 
     if (config.pp) {

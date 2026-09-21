@@ -33,7 +33,7 @@ const HLS_REFRESH_TTL = 1 * 1000;
 const HLS_VOD_REFRESH_TTL = 60 * 1000;
 const HLS_STALE_TTL = 5 * 60 * 1000;
 const ADDON_TYPE = "kronos";
-const RELEASE_VERSION = "1.7.7";
+const RELEASE_VERSION = "1.7.8";
 const BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 const LIVE_NOW_GENRE = "Live NOW";
 const LIVE_NOW_WINDOW_MS = 2 * 60 * 60 * 1000;
@@ -201,10 +201,22 @@ function getResolverExtractorUrl(config, sourceUrl, headers = {}) {
 
     const proxy = new URL(config.p);
     const cleanPath = proxy.pathname.replace(/\/$/, "");
-    proxy.pathname = `${cleanPath}/extractor/video.m3u8`;
-    proxy.search = "";
-    proxy.searchParams.set("d", sourceUrl);
-    proxy.searchParams.set("redirect_stream", "true");
+    const isWebExtractorLink = /watch\.php|dlive|streamed|sport99|vaughn|embed/i.test(sourceUrl) || (!/\.(m3u8|ts|mp4|mkv|avi|flv)(?:[?#].*)?$/i.test(sourceUrl) && !/extension=(ts|m3u8)/i.test(sourceUrl));
+
+    if (isWebExtractorLink) {
+        proxy.pathname = `${cleanPath}/extractor/video.m3u8`;
+        proxy.search = "";
+        proxy.searchParams.set("d", sourceUrl);
+        proxy.searchParams.set("redirect_stream", "false");
+    } else if (isHlsUrl(sourceUrl) || /extension=m3u8/i.test(sourceUrl)) {
+        proxy.pathname = `${cleanPath}/proxy/hls/manifest.m3u8`;
+        proxy.search = "";
+        proxy.searchParams.set("url", sourceUrl);
+    } else {
+        proxy.pathname = `${cleanPath}/proxy/stream`;
+        proxy.search = "";
+        proxy.searchParams.set("url", sourceUrl);
+    }
 
     if (config.pp) {
         proxy.searchParams.set("api_password", config.pp);
@@ -592,22 +604,10 @@ function isHlsUrl(url) {
 function buildStream(channel, host, configKey, config) {
     const isHls = isHlsUrl(channel.url);
     const hasHeaders = channel.headers && Object.keys(channel.headers).length > 0;
+    const requestHeaders = hasHeaders ? channel.headers : undefined;
 
-    if (isHls) {
-        return {
-            title: channel.name,
-            name: "Kronos",
-            url: `${host}/${configKey}/hls/${channel.id}/index.m3u8`,
-            behaviorHints: {
-                notWebReady: true,
-                bingeGroup: `kronos-${channel.id}`
-            }
-        };
-    }
-
-    const streamUrl = config.p ? getResolverExtractorUrl(config, channel.url, channel.headers) : channel.url;
-
-    if (isPlayableHttpUrl(streamUrl)) {
+    if (config.p) {
+        const streamUrl = getResolverExtractorUrl(config, channel.url, channel.headers);
         const hints = {
             notWebReady: true,
             bingeGroup: `kronos-${channel.id}`
@@ -623,6 +623,39 @@ function buildStream(channel, host, configKey, config) {
             title: channel.name,
             name: "Kronos",
             url: streamUrl,
+            behaviorHints: hints
+        };
+    }
+
+    if (isHls) {
+        return {
+            title: channel.name,
+            name: "Kronos",
+            url: `${host}/${configKey}/hls/${channel.id}/index.m3u8`,
+            behaviorHints: {
+                notWebReady: true,
+                bingeGroup: `kronos-${channel.id}`,
+                ...(requestHeaders ? { proxyHeaders: { request: requestHeaders } } : {})
+            }
+        };
+    }
+
+    if (isPlayableHttpUrl(channel.url)) {
+        const hints = {
+            notWebReady: true,
+            bingeGroup: `kronos-${channel.id}`
+        };
+
+        if (hasHeaders) {
+            hints.proxyHeaders = {
+                request: channel.headers
+            };
+        }
+
+        return {
+            title: channel.name,
+            name: "Kronos",
+            url: channel.url,
             behaviorHints: hints
         };
     }
